@@ -1,33 +1,26 @@
-use image::DynamicImage;
-use image::{imageops::FilterType, io::Reader as ImageReader, GrayImage, Luma};
-use ndarray::{Array2, Axis};
-use std::{env, default};
 use ansi_term::Colour::RGB;
+use image::DynamicImage;
+use image::{imageops::FilterType, io::Reader as ImageReader};
+use ndarray::{Array2, Axis};
+use std::str::FromStr;
+use std::env;
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
 
-    let path = get_path(&args);
-    println!("Path ... {}", path);
-
     let size = termion::terminal_size().unwrap();
 
-    let config = Config{ path: path.to_string(), term_size: size, ..Default::default() };
+    let mut config = Config::from_vec(&args);
+    config.term_size = size;
 
-    let image = read_image(path);
+    let image = read_image(&config.path);
     match image {
         Ok(img) => {
-            let img_mat = image_to_matrix(img, size);
-            //print_image(img_mat, &palette_5);
-            //print_image_ansi(img_mat, &ansi_8biy_gray);
-            print_image_ansi(img_mat, &ansi_gray);
+            let img_mat = image_to_color_matrix(img, config);
+            print_color_image_ansi(img_mat);
         }
-        Err(err) => println!("Path to image '{}': {}", path, err),
+        Err(err) => println!("Path to image '{}': {}", &config.path, err),
     }
-}
-
-fn get_path(args: &Vec<String>) -> &str {
-    args[1].as_str()
 }
 
 fn read_image(path: &str) -> Result<DynamicImage, image::ImageError> {
@@ -36,39 +29,34 @@ fn read_image(path: &str) -> Result<DynamicImage, image::ImageError> {
     image
 }
 
-fn image_to_matrix(image: DynamicImage, size: (u16, u16)) -> Array2<f64> {
-    let (width, height) = size;
-    let resized_img =  image
-        .resize_exact(width as u32, height as u32, FilterType::CatmullRom);
+fn image_to_color_matrix(image: DynamicImage, config: Config) -> Array2<[u8;3]> {
+    let (width, height) = config.term_size;
+    let width = width as u32;
+    let height = height as u32;
+    
+    let filter = FilterType::CatmullRom;
+    let resized_img = match config.resize_type {
+        ResizeType::Fit => image.resize(width, height, filter),
+        ResizeType::CropToFill => image.resize_to_fill(width, height, filter),
+        ResizeType::ScaleToFill => image.resize_exact(width, height, filter),
+    };
+
     let width_new = resized_img.width();
     let height_new = resized_img.height();
-    let gray_img = resized_img
-        .into_luma8()
-        .iter()
-        .map(|p| (*p as f64) / 255.0)
-        .collect::<Vec<f64>>();
-    let matrix = Array2::from_shape_vec((height_new as usize,width_new as usize), gray_img);
+    let color_img = match config.image_type {
+        ImageType::Color => resized_img.into_rgb8().enumerate_pixels().map(|(_,_,rgb)| rgb.0 ).collect::<Vec<[u8;3]>>(),
+        ImageType::Gray => resized_img.into_luma8().enumerate_pixels().map(|(_,_,p)| [p.0[0],p.0[0],p.0[0]]).collect::<Vec<[u8;3]>>(),
+    };
+    let matrix = Array2::from_shape_vec((height_new as usize, width_new as usize), color_img);
 
     matrix.unwrap()
 }
 
-fn print_image(image: Array2<f64>, palette: &dyn Fn(&f64) -> char) {
+fn print_color_image_ansi(image: Array2<[u8;3]>) {
     let mut text: String = String::new();
     for row in image.axis_iter(Axis(0)) {
-        for value in row.iter() {
-            let ch = palette(value);
-            text.push(ch);
-        }
-        text.push('\n');
-    }
-    println!("{}", text);
-}
-
-fn print_image_ansi(image: Array2<f64>, palette: &dyn Fn(&f64) -> String) {
-    let mut text: String = String::new();
-    for row in image.axis_iter(Axis(0)) {
-        for value in row.iter() {
-            let st = palette(value);
+        for px in row.iter() {
+            let st = RGB(px[0],px[1],px[2]).paint("█").to_string();
             text.push_str(st.as_str());
         }
         text.push('\n');
@@ -76,44 +64,74 @@ fn print_image_ansi(image: Array2<f64>, palette: &dyn Fn(&f64) -> String) {
     println!("{}", text);
 }
 
-fn ansi_gray(value: &f64) -> String{
-    let val = (255.0 * value) as u8; 
-    RGB(val,val,val).paint("█").to_string()
-}
-
-fn palette_5(value: &f64) -> char{
-    match value {
-        v if *v < 0.2 => ' ',
-        v if *v < 0.4 => '░',
-        v if *v < 0.6 => '▒',
-        v if *v < 0.8 => '▓',
-        _ => '█',
-    }
-}
-
-fn palette_7(value: &f64) -> char{
-    match value {
-        v if *v < 0.1 => ' ',
-        v if *v < 0.2 => '·',
-        v if *v < 0.3 => '•',
-        v if *v < 0.4 => '░',
-        v if *v < 0.6 => '▒',
-        v if *v < 0.8 => '▓',
-        _ => '█',
-    }
-}
-
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Config {
     path: String,
     resize_type: ResizeType,
-    term_size: (u16,u16),
+    term_size: (u16, u16),
+    image_type: ImageType,
 }
 
-#[derive(Default)]
+impl Config {
+    fn from_vec(value: &Vec<String>) -> Self {
+        match value.len() {
+            1 => panic!("Wrong input parameters. Expects: <path_to_image> (f|c|s) (C|G)"),
+            2 => Config {
+                path: value[1].clone(),
+                ..Default::default()
+            },
+            3 => Config {
+                path: value[1].clone(),
+                resize_type: ResizeType::from_str(value[2].as_str()).unwrap(),
+                image_type: Default::default(),
+                term_size: Default::default(),
+            },
+            _ => Config {
+                path: value[1].clone(),
+                resize_type: ResizeType::from_str(value[2].as_str()).unwrap(),
+                image_type: ImageType::from_str(value[3].as_str()).unwrap(),
+                term_size: Default::default(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 enum ResizeType {
     #[default]
-    Fit,            // preserve aspect ratio
-    CropToFill,     // preserve aspect ratio
-    ScaleToFill,    // changes aspect ratio
+    Fit, // preserve aspect ratio
+    CropToFill,  // preserve aspect ratio
+    ScaleToFill, // changes aspect ratio
+}
+
+impl FromStr for ResizeType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "f" => Ok(ResizeType::Fit),
+            "c" => Ok(ResizeType::CropToFill),
+            "s" => Ok(ResizeType::ScaleToFill),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug,Default)]
+enum ImageType {
+    #[default]
+    Color,
+    Gray,
+}
+
+impl FromStr for ImageType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "C" => Ok(ImageType::Color),
+            "G" => Ok(ImageType::Gray),
+            _ => Err(()),
+        }
+    }
 }
