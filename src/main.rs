@@ -2,11 +2,16 @@ use ansi_term::Colour::RGB;
 use image::DynamicImage;
 use image::{imageops::FilterType, io::Reader as ImageReader};
 use ndarray::{Array2, Axis};
-use std::str::FromStr;
 use std::env;
+use std::str::FromStr;
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
+
+    if args.len() < 2 {
+        println!("{}", get_help());
+        return;
+    }
 
     let size = termion::terminal_size().unwrap();
 
@@ -29,11 +34,11 @@ fn read_image(path: &str) -> Result<DynamicImage, image::ImageError> {
     image
 }
 
-fn image_to_color_matrix(image: DynamicImage, config: Config) -> Array2<[u8;3]> {
+fn image_to_color_matrix(image: DynamicImage, config: Config) -> Array2<[u8; 3]> {
     let (width, height) = config.term_size;
     let width = width as u32;
-    let height = height as u32;
-    
+    let height = 2*height as u32;
+
     let filter = FilterType::CatmullRom;
     let resized_img = match config.resize_type {
         ResizeType::Fit => image.resize(width, height, filter),
@@ -44,24 +49,46 @@ fn image_to_color_matrix(image: DynamicImage, config: Config) -> Array2<[u8;3]> 
     let width_new = resized_img.width();
     let height_new = resized_img.height();
     let color_img = match config.image_type {
-        ImageType::Color => resized_img.into_rgb8().enumerate_pixels().map(|(_,_,rgb)| rgb.0 ).collect::<Vec<[u8;3]>>(),
-        ImageType::Gray => resized_img.into_luma8().enumerate_pixels().map(|(_,_,p)| [p.0[0],p.0[0],p.0[0]]).collect::<Vec<[u8;3]>>(),
+        ImageType::Color => resized_img
+            .into_rgb8()
+            .enumerate_pixels()
+            .map(|(_, _, rgb)| rgb.0)
+            .collect::<Vec<[u8; 3]>>(),
+        ImageType::Gray => resized_img
+            .into_luma8()
+            .enumerate_pixels()
+            .map(|(_, _, p)| [p.0[0], p.0[0], p.0[0]])
+            .collect::<Vec<[u8; 3]>>(),
     };
     let matrix = Array2::from_shape_vec((height_new as usize, width_new as usize), color_img);
 
     matrix.unwrap()
 }
 
-fn print_color_image_ansi(image: Array2<[u8;3]>) {
+fn print_color_image_ansi(image: Array2<[u8; 3]>) {
     let mut text: String = String::new();
-    for row in image.axis_iter(Axis(0)) {
-        for px in row.iter() {
-            let st = RGB(px[0],px[1],px[2]).paint("█").to_string();
+    for i in 0..image.len_of(Axis(0)) / 2 {
+        for j in 0..image.len_of(Axis(1)) {
+            let px_upper = image[[2 * i, j]];
+            let px_lower = image[[2 * i + 1, j]];
+            let st = RGB(px_lower[0], px_lower[1], px_lower[2])
+                .on(RGB(px_upper[0], px_upper[1], px_upper[2]))
+                .paint("▄")
+                .to_string();
             text.push_str(st.as_str());
         }
         text.push('\n');
     }
     println!("{}", text);
+}
+
+fn get_help() -> String {
+    "Terminal image viewer (tiv)\n\
+     ---------------------------\n\
+     tiv-rs <path_to_image> (resize_type (image_type))\n\
+     \tresize type ... f (fit; default) | c (crop to fill) | s (scale to fill)\n\
+     \timage type  ... C (color; default) | G (gray))"
+        .to_string()
 }
 
 #[derive(Debug, Default)]
@@ -75,7 +102,7 @@ struct Config {
 impl Config {
     fn from_vec(value: &Vec<String>) -> Self {
         match value.len() {
-            1 => panic!("Wrong input parameters. Expects: <path_to_image> (f|c|s) (C|G)"),
+            1 => panic!("{}", get_help()),
             2 => Config {
                 path: value[1].clone(),
                 ..Default::default()
@@ -117,7 +144,7 @@ impl FromStr for ResizeType {
     }
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug, Default)]
 enum ImageType {
     #[default]
     Color,
