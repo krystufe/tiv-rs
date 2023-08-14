@@ -1,9 +1,13 @@
 use ansi_term::Colour::RGB;
-use image::DynamicImage;
+use image::codecs::gif::GifDecoder;
 use image::{imageops::FilterType, io::Reader as ImageReader};
+use image::{AnimationDecoder, DynamicImage, RgbaImage};
 use ndarray::{Array2, Axis};
-use std::env;
+use std::fs::File;
+use std::path::Path;
 use std::str::FromStr;
+use std::time::Duration;
+use std::{env, thread};
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -18,6 +22,39 @@ fn main() {
     let mut config = Config::from_vec(&args);
     config.term_size = size;
 
+    let extension = Path::new(&config.path).extension();
+    match extension {
+        Some(p) if p == "gif" => show_animation(&config),
+        _ => show_image(&config),
+    }
+}
+
+fn show_animation(config: &Config) {
+    match File::open(&config.path) {
+        Ok(img_file) => match GifDecoder::new(img_file) {
+            Ok(decoder) => animate(decoder, config),
+            Err(err) => println!("Unable to decode GIF image: {}", err),
+        },
+        Err(err) => println!("Unable to open file {}: {}", config.path, err),
+    }
+}
+
+fn animate(decoder: GifDecoder<File>, config: &Config) {
+    let frames = decoder.into_frames().collect_frames().unwrap();
+    for frame in frames {
+        let (numer, denom) = frame.delay().numer_denom_ms();
+        let micros = 1000 * numer / denom;
+
+        let image = DynamicImage::from(RgbaImage::from(frame.into_buffer()));
+        let img_mat = image_to_color_matrix(image, config);
+        print_color_image_ansi(img_mat);
+
+        let duration = Duration::from_micros(micros as u64);
+        thread::sleep(duration);
+    }
+}
+
+fn show_image(config: &Config) {
     let image = read_image(&config.path);
     match image {
         Ok(img) => {
@@ -34,10 +71,10 @@ fn read_image(path: &str) -> Result<DynamicImage, image::ImageError> {
     image
 }
 
-fn image_to_color_matrix(image: DynamicImage, config: Config) -> Array2<[u8; 3]> {
+fn image_to_color_matrix(image: DynamicImage, config: &Config) -> Array2<[u8; 3]> {
     let (width, height) = config.term_size;
     let width = width as u32;
-    let height = 2*height as u32;
+    let height = 2 * height as u32;
 
     let filter = FilterType::CatmullRom;
     let resized_img = match config.resize_type {
