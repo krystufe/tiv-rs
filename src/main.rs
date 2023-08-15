@@ -164,9 +164,11 @@ fn print_color_image_ansi(image: Array2<[u8; 3]>) {
 fn get_help() -> String {
     "Terminal image viewer (tiv)\n\
      ---------------------------\n\
-     tiv-rs <path_to_image> (resize_type (image_type))\n\
+     tiv-rs <path_to_image> (resize_type (image_type (animation_type)))\n\
      \tresize type ... f (fit; default) | c (crop to fill) | s (scale to fill)\n\
-     \timage type  ... C (color; default) | G (gray))"
+     \timage type  ... C (color; default) | G (gray))\n\
+     \tanimation_type ... O (once; default) | F (forever) | P (pendulum)\n\n\
+     Note: Animation type will be applied only for GIF images."
         .to_string()
 }
 
