@@ -41,16 +41,30 @@ fn show_animation(config: &Config) {
 
 fn animate(decoder: GifDecoder<File>, config: &Config) {
     let frames = decoder.into_frames().collect_frames().unwrap();
+    let frame_count = frames.len();
+    let mut img_matrices: Vec<(Duration, Array2<[u8; 3]>)> = vec![];
     for frame in frames {
         let (numer, denom) = frame.delay().numer_denom_ms();
         let micros = 1000 * numer / denom;
 
         let image = DynamicImage::from(RgbaImage::from(frame.into_buffer()));
         let img_mat = image_to_color_matrix(image, config);
-        print_color_image_ansi(img_mat);
 
         let duration = Duration::from_micros(micros as u64);
-        thread::sleep(duration);
+
+        img_matrices.push((duration, img_mat));
+    }
+
+    let mut index = 0;
+    loop {
+        let (duration, img_mat) = &img_matrices[index];
+        print_color_image_ansi(img_mat.clone());
+        index = if index == frame_count - 1 {
+            0
+        } else {
+            index + 1
+        };
+        thread::sleep(*duration);
     }
 }
 
