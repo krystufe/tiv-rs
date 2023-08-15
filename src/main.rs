@@ -55,16 +55,44 @@ fn animate(decoder: GifDecoder<File>, config: &Config) {
         img_matrices.push((duration, img_mat));
     }
 
+    let update_index: fn(usize, usize, i16) -> (usize, i16) = match config.anim_type {
+        AnimType::Once => |index, length, direction| {
+            if index == length - 1 {
+                (usize::MAX, direction)
+            } else {
+                (index + 1, direction)
+            }
+        },
+        AnimType::Forever => |index, length, direction| {
+            if index == length - 1 {
+                (0, direction)
+            } else {
+                (index + 1, direction)
+            }
+        },
+        AnimType::Pendulum => |index, length, mut direction| {
+            if direction < 0 && index == 0 {
+                direction = 1;
+            }
+            if direction > 0 && index == length - 1 {
+                direction = -1;
+            }
+            let new_index = (index as i16 + direction) as usize;
+            (new_index, direction)
+        },
+    };
+
     let mut index = 0;
+    let mut direction: i16 = 1;
     loop {
         let (duration, img_mat) = &img_matrices[index];
         print_color_image_ansi(img_mat.clone());
-        index = if index == frame_count - 1 {
-            0
-        } else {
-            index + 1
-        };
+        (index, direction) = update_index(index, frame_count, direction);
         thread::sleep(*duration);
+
+        if index == usize::MAX {
+            break;
+        }
     }
 }
 
@@ -148,6 +176,7 @@ struct Config {
     resize_type: ResizeType,
     term_size: (u16, u16),
     image_type: ImageType,
+    anim_type: AnimType,
 }
 
 impl Config {
@@ -161,14 +190,20 @@ impl Config {
             3 => Config {
                 path: value[1].clone(),
                 resize_type: ResizeType::from_str(value[2].as_str()).unwrap(),
-                image_type: Default::default(),
-                term_size: Default::default(),
+                ..Default::default()
+            },
+            4 => Config {
+                path: value[1].clone(),
+                resize_type: ResizeType::from_str(value[2].as_str()).unwrap(),
+                image_type: ImageType::from_str(value[3].as_str()).unwrap(),
+                ..Default::default()
             },
             _ => Config {
                 path: value[1].clone(),
                 resize_type: ResizeType::from_str(value[2].as_str()).unwrap(),
                 image_type: ImageType::from_str(value[3].as_str()).unwrap(),
-                term_size: Default::default(),
+                anim_type: AnimType::from_str(value[4].as_str()).unwrap(),
+                ..Default::default()
             },
         }
     }
@@ -209,6 +244,27 @@ impl FromStr for ImageType {
         match s {
             "C" => Ok(ImageType::Color),
             "G" => Ok(ImageType::Gray),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+enum AnimType {
+    #[default]
+    Once,
+    Forever,
+    Pendulum,
+}
+
+impl FromStr for AnimType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "O" => Ok(AnimType::Once),
+            "F" => Ok(AnimType::Forever),
+            "P" => Ok(AnimType::Pendulum),
             _ => Err(()),
         }
     }
